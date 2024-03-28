@@ -403,30 +403,35 @@ def generate_snapshots_from_list(db, cyhy_db_section):
         logging.info(
             "[%s] Starting snapshot for: %s", threading.current_thread().name, org_id
         )
-        generate_snapshot(db, cyhy_db_section, org_id, use_only_existing_snapshots=False)
-
-
-def manage_snapshot_threads(db, cyhy_db_section):
+def manage_snapshot_threads(db, cyhy_db_section, third_party):
     """Spawn threads to generate snapshots
     
-    Build the lists of reports and snapshots to be generated, then spawn the
-    threads that generate the snapshots."""
+    Build the list of snapshots to be generated, then spawn the threads that
+    generate the snapshots."""
     start_time = time.time()
 
-    logging.info("Building list of reports to generate...")
-    reports_to_generate = create_list_of_reports_to_generate(db)
+    # This variable is only used when generating third-party snapshots
+    time_to_generate_grouping_node_snapshots = 0
 
-    logging.info("Building list of snapshots to generate...")
+    global reports_to_generate
     global snapshots_to_generate
-    # No thread locking is needed here for snapshots_to_generate because we are
-    # still single-threaded at this point
-    snapshots_to_generate = create_list_of_snapshots_to_generate(
-        db, reports_to_generate
-    )
+    # No thread locking is needed here for reports_to_generate or
+    # snapshots_to_generate because we are still single-threaded at this point
+
+    if third_party:
+        # Some extra preparation must be done before generating third-party snapshots
+        snapshots_to_generate, time_to_generate_grouping_node_snapshots = \
+        prepare_for_third_party_snapshots(db, cyhy_db_section, reports_to_generate)
+    else:
+        logging.info("Building list of snapshots to generate...")
+        snapshots_to_generate = create_list_of_snapshots_to_generate(
+            db, reports_to_generate
+        )
 
     logging.debug(
-        "%d snapshots to generate: %s",
+        "%d %ssnapshots to generate: %s",
         len(snapshots_to_generate),
+        "third-party " if third_party else "",
         snapshots_to_generate,
     )
 
@@ -437,12 +442,17 @@ def manage_snapshot_threads(db, cyhy_db_section):
     for t in range(SNAPSHOT_THREADS):
         try:
             snapshot_thread = threading.Thread(
-                target=generate_snapshots_from_list, args=(db, cyhy_db_section)
+                target=generate_snapshots_from_list,
+                args=(db, cyhy_db_section, third_party)
             )
             snapshot_threads.append(snapshot_thread)
             snapshot_thread.start()
         except Exception:
-            logging.error("Unable to start snapshot thread #%s", t)
+            logging.error(
+                "Unable to start %ssnapshot thread #%s",
+                "third-party " if third_party else "",
+                t,
+            )
 
     # Wait until each thread terminates
     for snapshot_thread in snapshot_threads:
@@ -450,12 +460,18 @@ def manage_snapshot_threads(db, cyhy_db_section):
     
     time_to_generate_snapshots = time.time() - start_time
     logging.info(
-        "Time to complete snapshots: %.2f minutes", time_to_generate_snapshots / 60
+        "Time to complete %ssnapshots: %.2f minutes",
+        "third-party " if third_party else "",
+        time_to_generate_snapshots / 60,
     )
 
-    reports_to_generate = set(reports_to_generate) - set(failed_snapshots)
-    return sorted(list(reports_to_generate)), time_to_generate_snapshots
+    # Remove any failed snapshots from the list of reports to generate
+    if third_party:
+        reports_to_generate = set(reports_to_generate) - set(failed_tp_snapshots)
+    else:
+        reports_to_generate = set(reports_to_generate) - set(failed_snapshots)
 
+    return sorted(list(reports_to_generate)), time_to_generate_snapshots, time_to_generate_grouping_node_snapshots
 
 def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog):
     """Generate a report for a specified organization."""
