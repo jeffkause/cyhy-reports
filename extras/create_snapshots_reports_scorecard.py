@@ -378,7 +378,7 @@ def generate_snapshot(db, cyhy_db_section, org_id, third_party):
     return snapshot_process.returncode
 
 
-def generate_snapshots_from_list(db, cyhy_db_section):
+def generate_snapshots_from_list(db, cyhy_db_section, third_party):
     """Attempt to generate a snapshot for each organization in a global list.
 
     Each thread pulls an organization ID from the global list
@@ -387,22 +387,31 @@ def generate_snapshots_from_list(db, cyhy_db_section):
     while True:
         with stg_lock:
             logging.debug(
-                "[%s] %d snapshot(s) left to generate",
+                "[%s] %d %ssnapshot(s) left to generate",
                 threading.current_thread().name,
                 len(snapshots_to_generate),
+                "third-party " if third_party else "",
             )
             if snapshots_to_generate:
                 org_id = snapshots_to_generate.pop(0)
             else:
                 logging.info(
-                    "[%s] No snapshots left to generate - thread exiting",
+                    "[%s] No %ssnapshots left to generate - thread exiting",
                     threading.current_thread().name,
+                    "third-party " if third_party else "",
                 )
                 break
 
         logging.info(
-            "[%s] Starting snapshot for: %s", threading.current_thread().name, org_id
+            "[%s] Starting %ssnapshot for: %s",
+            threading.current_thread().name,
+            "third-party " if third_party else "",
+            org_id,
         )
+        generate_snapshot(db, cyhy_db_section, org_id, third_party)
+
+
+
 def manage_snapshot_threads(db, cyhy_db_section, third_party):
     """Spawn threads to generate snapshots
     
