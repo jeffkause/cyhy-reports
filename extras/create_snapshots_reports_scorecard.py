@@ -652,7 +652,7 @@ def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog,
                 failed_reports.append(org_id)
 
 
-def generate_reports_from_list(cyhy_db_section, scan_db_section, use_docker, nolog):
+def generate_reports_from_list(cyhy_db_section, scan_db_section, use_docker, nolog, third_party):
     """Attempt to generate a report for each organization in a global list.
 
     Each thread pulls an organization ID from the global list
@@ -661,19 +661,28 @@ def generate_reports_from_list(cyhy_db_section, scan_db_section, use_docker, nol
     while True:
         with rtg_lock:
             logging.debug(
-                "[%s] %d reports left to generate",
+                "[%s] %d %sreports left to generate",
                 threading.current_thread().name,
                 len(reports_to_generate),
+                "third-party " if third_party else "",
             )
             if reports_to_generate:
                 org_id = reports_to_generate.pop(0)
             else:
                 logging.info(
-                    "[%s] No reports left to generate - exiting",
+                    "[%s] No %sreports left to generate - exiting",
                     threading.current_thread().name,
+                    "third-party " if third_party else "",
                 )
                 break
-        generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog)
+        generate_report(
+            org_id,
+            cyhy_db_section,
+            scan_db_section,
+            use_docker,
+            nolog,
+            third_party
+        )
 
 
 def manage_report_threads(cyhy_db_section, scan_db_section, use_docker, nolog):
