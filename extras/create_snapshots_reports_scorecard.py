@@ -1006,7 +1006,8 @@ def main():
 
     time_to_generate_snapshots = 0
     time_to_generate_reports = 0
-    time_to_generate_tp_snaps = 0
+    time_to_generate_grouping_node_snapshots = 0
+    time_to_generate_tp_snapshots = 0
     time_to_generate_tp_reports = 0
 
     create_subdirectories()
