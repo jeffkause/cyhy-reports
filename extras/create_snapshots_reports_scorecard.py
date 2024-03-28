@@ -238,17 +238,26 @@ def sample_report(cyhy_db_section, scan_db_section, nolog):
         logging.info("Stderr report detail: %s%s", data, err)
 
 
-def create_list_of_reports_to_generate(db):
+def create_list_of_reports_to_generate(db, third_party):
     """Create list of organizations that need reports generated."""
+    if third_party:
+        # Find orgs that receive third-party reports and that also have
+        # children.  If a third-party org has no children, there is no point in
+        # generating a report since it would be empty.
+        query = {
+            "report_types": REPORT_TYPE.CYHY_THIRD_PARTY,
+            "children": {"$exists": True, "$ne": []},
+        }
+    else:
+        # Find orgs that receive weekly CyHy reports
+        query = {
+            "report_period": REPORT_PERIOD.WEEKLY,
+            "report_types": REPORT_TYPE.CYHY,
+        }
     return sorted(
         [
-            i["_id"]
-            for i in db.RequestDoc.collection.find(
-                {
-                    "report_period": REPORT_PERIOD.WEEKLY,
-                    "report_types": REPORT_TYPE.CYHY,
-                },
-                {"_id": 1},
+            i["_id"] for i in db.RequestDoc.collection.find(
+                query, {"_id": 1}
             )
         ]
     )
