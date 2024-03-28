@@ -1108,24 +1108,27 @@ def main():
         global reports_to_generate
         # No thread locking is needed here for reports_to_generate because we
         # are still single-threaded at this point
+        logging.info("Building list of reports to generate...")
+        reports_to_generate = create_list_of_reports_to_generate(db, third_party=False)
+
         if args["--no-snapshots"]:
-            # Skip creation of snapshots
+            # Skip creation of "regular" (non-third-party) snapshots
             logging.info("Skipping snapshot creation due to --no-snapshots parameter")
-            reports_to_generate = create_list_of_reports_to_generate(db)
         else:
-            # Generate all necessary snapshots and return the updated list of
-            # reports to be generated
-            reports_to_generate, time_to_generate_snapshots = manage_snapshot_threads(
-                db, cyhy_db_section
+            # Generate all "regular" (non-third-party) snapshots and return the
+            # updated list of reports to be generated
+            reports_to_generate, time_to_generate_snapshots, \
+            time_to_generate_grouping_node_snapshots = manage_snapshot_threads(
+                db, cyhy_db_section, third_party=False
             )
 
         sample_report(
             cyhy_db_section, scan_db_section, nolog
         )  # Create the sample (anonymized) report
         
-        # Generate all necessary reports
+        # Generate all necessary "regular" (non-third-party) reports
         time_to_generate_reports = manage_report_threads(
-            cyhy_db_section, scan_db_section, use_docker, nolog
+            cyhy_db_section, scan_db_section, use_docker, nolog, third_party=False
         )
 
         # Fetch list of third-party report IDs with children; if a third-party
