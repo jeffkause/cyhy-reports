@@ -282,13 +282,14 @@ def create_list_of_snapshots_to_generate(db, reports_to_generate):
     return sorted(list(set(reports_to_generate) - report_org_descendants))
 
 
-def generate_snapshot(db, cyhy_db_section, org_id, use_only_existing_snapshots):
+def generate_snapshot(db, cyhy_db_section, org_id, third_party):
     """Generate a snapshot for a specified organization."""
     snapshot_start_time = time.time()
 
     snapshot_command = ["cyhy-snapshot", "--section", cyhy_db_section, "create"]
 
-    if use_only_existing_snapshots:
+    # Third-party snapshots are based on snapshots that already exist
+    if third_party:
         snapshot_command.append("--use-only-existing-snapshots")
 
     snapshot_command.append(org_id)
@@ -304,12 +305,20 @@ def generate_snapshot(db, cyhy_db_section, org_id, use_only_existing_snapshots):
     data, err = snapshot_process.communicate("yes")
 
     snapshot_duration = time.time() - snapshot_start_time
-    with sd_lock:
-        snapshot_durations.append((org_id, snapshot_duration))
+
+    if third_party:
+        with tpsd_lock:
+            tp_snapshot_durations.append((org_id, snapshot_duration))
+    else:
+        with sd_lock:
+            snapshot_durations.append((org_id, snapshot_duration))
 
     # Determine org's descendants for logging below
     org_descendants = list()
-    if not use_only_existing_snapshots:
+    # Third-party snapshots are based on descendant snapshots that already
+    # exist, so there is no need to log their descendants here because those
+    # descendant snapshots are not being created by this script.
+    if not third_party:
         if snapshot_process.returncode == 0:
             org_descendants = db.SnapshotDoc.find_one(
                 {"latest": True, "owner": org_id}
@@ -321,33 +330,45 @@ def generate_snapshot(db, cyhy_db_section, org_id, use_only_existing_snapshots):
 
     if snapshot_process.returncode == 0:
         logging.info(
-            "[%s] Successful snapshot: %s (%.2f s)",
+            "[%s] Successful %ssnapshot: %s (%.2f s)",
             threading.current_thread().name,
+            "third-party " if third_party else "",
             org_id,
             snapshot_duration,
         )
-        with ss_lock:
-            successful_snapshots.append(org_id)
-            if org_descendants and not use_only_existing_snapshots:
-                logging.info(
-                    "[%s]  - Includes successful descendant snapshot(s): %s",
-                    threading.current_thread().name,
-                    org_descendants,
-                )
-                successful_snapshots.extend(org_descendants)
+        if third_party:
+            with stps_lock:
+                successful_tp_snapshots.append(org_id)
+        else:
+            with ss_lock:
+                successful_snapshots.append(org_id)
+                if org_descendants:
+                    logging.info(
+                        "[%s]  - Includes successful descendant snapshot(s): %s",
+                        threading.current_thread().name,
+                        org_descendants,
+                    )
+                    successful_snapshots.extend(org_descendants)
     else:
         logging.error(
-            "[%s] Unsuccessful snapshot: %s", threading.current_thread().name, org_id
+            "[%s] Unsuccessful %ssnapshot: %s",
+            threading.current_thread().name,
+            "third-party " if third_party else "",
+            org_id,
         )
-        with fs_lock:
-            failed_snapshots.append(org_id)
-            if org_descendants and not use_only_existing_snapshots:
-                logging.error(
-                    "[%s]  - Unsuccessful descendant snapshot(s): %s",
-                    threading.current_thread().name,
-                    org_descendants,
-                )
-                failed_snapshots.extend(org_descendants)
+        if third_party:
+            with ftps_lock:
+                failed_tp_snapshots.append(org_id)
+        else:
+            with fs_lock:
+                failed_snapshots.append(org_id)
+                if org_descendants:
+                    logging.error(
+                        "[%s]  - Unsuccessful descendant snapshot(s): %s",
+                        threading.current_thread().name,
+                        org_descendants,
+                    )
+                    failed_snapshots.extend(org_descendants)
         logging.error(
             "[%s] Stderr failure detail: %s %s",
             threading.current_thread().name,
