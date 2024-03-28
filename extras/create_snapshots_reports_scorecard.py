@@ -79,6 +79,27 @@ fr_lock = threading.Lock()
 report_durations = list()
 rd_lock = threading.Lock()
 
+# Global variables and thread locks for third-party snapshots and reports
+# Note that snapshots_to_generate and reports_to_generate (and their associated
+# locks) are reused for third-party snapshots and reports, so we don't need
+# variables and locks for them below.
+successful_tp_snapshots = list()
+stps_lock = threading.Lock()
+
+failed_tp_snapshots = list()
+ftps_lock = threading.Lock()
+
+tp_snapshot_durations = list()
+tpsd_lock = threading.Lock()
+
+successful_tp_reports = list()
+stpr_lock = threading.Lock()
+
+failed_tp_reports = list()
+ftpr_lock = threading.Lock()
+
+tp_report_durations = list()
+tprd_lock = threading.Lock()
 
 def create_subdirectories():
     # Create all required subdirectories (if they don't already exist)
