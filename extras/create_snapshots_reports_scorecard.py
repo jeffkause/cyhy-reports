@@ -560,11 +560,15 @@ def manage_snapshot_threads(db, cyhy_db_section, third_party):
 
     return sorted(list(reports_to_generate)), time_to_generate_snapshots, time_to_generate_grouping_node_snapshots
 
-def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog):
+
+def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog, third_party):
     """Generate a report for a specified organization."""
     report_start_time = time.time()
     logging.info(
-        "[%s] Starting report for: %s", threading.current_thread().name, org_id
+        "[%s] Starting %sreport for: %s",
+        threading.current_thread().name,
+        "third-party " if third_party else "",
+        org_id,
     )
 
     # Base command for generating a report (we will append the org_id below)
@@ -606,22 +610,32 @@ def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog)
     data, err = report_process.communicate()
 
     report_duration = time.time() - report_start_time
-    with rd_lock:
-        report_durations.append((org_id, report_duration))
+    if third_party:
+        with tprd_lock:
+            tp_report_durations.append((org_id, report_duration))
+    else:
+        with rd_lock:
+            report_durations.append((org_id, report_duration))
 
     if report_process.returncode == 0:
         logging.info(
-            "[%s] Successful report generated: %s (%.2f s)",
+            "[%s] Successful %sreport generated: %s (%.2f s)",
             threading.current_thread().name,
+            "third-party " if third_party else "",
             org_id,
             round(report_duration, 2),
         )
-        with sr_lock:
-            successful_reports.append(org_id)
+        if third_party:
+            with stpr_lock:
+                successful_tp_reports.append(org_id)
+        else:
+            with sr_lock:
+                successful_reports.append(org_id)
     else:
         logging.info(
-            "[%s] Failure to generate report: %s",
+            "[%s] Failure to generate %sreport: %s",
             threading.current_thread().name,
+            "third-party " if third_party else "",
             org_id,
         )
         logging.info(
@@ -630,8 +644,12 @@ def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog)
             data,
             err,
         )
-        with fr_lock:
-            failed_reports.append(org_id)
+        if third_party:
+            with ftpr_lock:
+                failed_tp_reports.append(org_id)
+        else:
+            with fr_lock:
+                failed_reports.append(org_id)
 
 
 def generate_reports_from_list(cyhy_db_section, scan_db_section, use_docker, nolog):
