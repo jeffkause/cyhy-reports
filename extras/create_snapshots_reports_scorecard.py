@@ -1164,21 +1164,25 @@ def main():
             logging.info("Number of snapshots failed: 0")
         else:
             logging.info(
-                "Number of snapshots generated: %d", len(successful_snapshots),
+                "Number of snapshots generated: %d",
+                len(successful_snapshots) + len(successful_tp_snapshots),
             )
             logging.info(
-                "  Third-party snapshots generated: %d", len(successful_tp_snaps),
+                "  Number of third-party and grouping node snapshots generated: %d",
+                len(successful_tp_snapshots),
             )
             logging.info(
-                "Number of snapshots failed: %d", len(failed_snapshots),
+                "Number of snapshots failed: %d",
+                len(failed_snapshots) + len(failed_tp_snapshots),
             )
             logging.info(
-                "  Third-party snapshots failed: %d", len(failed_tp_snaps),
+                "  Number of third-party and grouping node snapshots failed: %d",
+                len(failed_tp_snapshots),
             )
-            if failed_snapshots:
-                logging.error("Failed snapshots:")
-                for i in failed_snapshots:
-                    if i in failed_tp_snaps:
+            if failed_snapshots or failed_tp_snapshots:
+                logging.error("Failed snapshots (reports not attempted):")
+                for i in failed_snapshots + failed_tp_snapshots:
+                    if i in failed_tp_snapshots:
                         logging.error("%s (third-party)", i)
                     else:
                         logging.error(i)
@@ -1197,14 +1201,14 @@ def main():
             "  Third-party reports failed: %d", len(failed_tp_reports),
         )
         if failed_reports or failed_tp_reports:
-            logging.info("Failed reports:")
+            logging.error("Failed reports:")
             for i in failed_reports + failed_tp_reports:
                 if i in failed_tp_reports:
                     logging.error("%s (third-party)", i)
                 else:
                     logging.error(i)
 
-        if not args["--no-snapshots"]:
+        if not args["--no-snapshots"] and len(snapshot_durations) > 0:
             logging.info("Snapshot performance:")
             durations = [x[1] for x in snapshot_durations]
             max = numpy.max(durations)
@@ -1220,27 +1224,82 @@ def main():
             logging.info("Longest snapshots:")
             for i in snapshot_durations[:10]:
                 logging.info("  %s: %.1f seconds (%.1f minutes)", i[0], i[1], i[1] / 60)
+            
+            if len(tp_snapshot_durations) > 0:
+                logging.info("Third-party and grouping node snapshot performance:")
+                durations = [x[1] for x in tp_snapshot_durations]
+                max = numpy.max(durations)
+                logging.info("  Longest third-party/grouping node snapshot: %.1f seconds (%.1f minutes)",
+                             max, max / 60)
+                median = numpy.median(durations)
+                logging.info("  Median third-party/grouping node snapshot: %.1f seconds (%.1f minutes)",
+                             median, median / 60)
+                mean = numpy.mean(durations)
+                logging.info("  Mean third-party/grouping node snapshot: %.1f seconds (%.1f minutes)",
+                             mean, mean / 60)
+                min = numpy.min(durations)
+                logging.info("  Shortest third-party/grouping node snapshot: %.1f seconds (%.1f minutes)",
+                             min, min / 60)
 
-        logging.info("Report performance:")
-        durations = [x[1] for x in report_durations]
-        max = numpy.max(durations)
-        logging.info("  Longest report: %.1f seconds (%.1f minutes)", max, max / 60)
-        median = numpy.median(durations)
-        logging.info("  Median report: %.1f seconds (%.1f minutes)", median, median / 60)
-        mean = numpy.mean(durations)
-        logging.info("  Mean report: %.1f seconds (%.1f minutes)", mean, mean / 60)
-        min = numpy.min(durations)
-        logging.info("  Shortest report: %.1f seconds (%.1f minutes)", min, min / 60)
+                tp_snapshot_durations.sort(key=lambda tup: tup[1], reverse=True)
+                logging.info("Longest third-party/grouping node snapshots:")
+                for i in tp_snapshot_durations[:10]:
+                    logging.info("  %s: %.1f seconds (%.1f minutes)",
+                                 i[0], i[1], i[1] / 60)
 
-        report_durations.sort(key=lambda tup: tup[1], reverse=True)
-        logging.info("Longest reports:")
-        for i in report_durations[:10]:
-            logging.info("  %s: %.1f seconds (%.1f minutes)", i[0], i[1], i[1] / 60)
+        if len(report_durations) > 0:
+            logging.info("Report performance:")
+            durations = [x[1] for x in report_durations]
+            max = numpy.max(durations)
+            logging.info("  Longest report: %.1f seconds (%.1f minutes)",
+                         max, max / 60)
+            median = numpy.median(durations)
+            logging.info("  Median report: %.1f seconds (%.1f minutes)",
+                         median, median / 60)
+            mean = numpy.mean(durations)
+            logging.info("  Mean report: %.1f seconds (%.1f minutes)",
+                         mean, mean / 60)
+            min = numpy.min(durations)
+            logging.info("  Shortest report: %.1f seconds (%.1f minutes)",
+                         min, min / 60)
 
-        logging.info("Time to generate snapshots: %.2f minutes", time_to_generate_snapshots / 60)
-        logging.info("Time to generate reports: %.2f minutes", time_to_generate_reports / 60)
-        logging.info("Time to generate third-party snapshots: %.2f minutes", time_to_generate_tp_snaps / 60)
-        logging.info("Time to generate third-party reports: %.2f minutes", time_to_generate_tp_reports / 60)
+            report_durations.sort(key=lambda tup: tup[1], reverse=True)
+            logging.info("Longest reports:")
+            for i in report_durations[:10]:
+                logging.info("  %s: %.1f seconds (%.1f minutes)", i[0], i[1], i[1] / 60)
+
+        if len(tp_report_durations) > 0:
+            logging.info("Third-party report performance:")
+            durations = [x[1] for x in tp_report_durations]
+            max = numpy.max(durations)
+            logging.info("  Longest third-party report: %.1f seconds (%.1f minutes)",
+                         max, max / 60)
+            median = numpy.median(durations)
+            logging.info("  Median third-party report: %.1f seconds (%.1f minutes)",
+                         median, median / 60)
+            mean = numpy.mean(durations)
+            logging.info("  Mean third-party report: %.1f seconds (%.1f minutes)",
+                         mean, mean / 60)
+            min = numpy.min(durations)
+            logging.info("  Shortest third-party report: %.1f seconds (%.1f minutes)",
+                         min, min / 60)
+
+            tp_report_durations.sort(key=lambda tup: tup[1], reverse=True)
+            logging.info("Longest third-party reports:")
+            for i in tp_report_durations[:10]:
+                logging.info("  %s: %.1f seconds (%.1f minutes)",
+                             i[0], i[1], i[1] / 60)
+
+        logging.info("Time to generate snapshots: %.2f minutes",
+                     time_to_generate_snapshots / 60)
+        logging.info("Time to generate reports: %.2f minutes",
+                     time_to_generate_reports / 60)
+        logging.info("Time to generate grouping node snapshots: %.2f minutes",
+                     time_to_generate_grouping_node_snapshots / 60)
+        logging.info("Time to generate third-party snapshots: %.2f minutes",
+                     time_to_generate_tp_snapshots / 60)
+        logging.info("Time to generate third-party reports: %.2f minutes",
+                     time_to_generate_tp_reports / 60)
         logging.info("Total time: %.2f minutes", (time.time() - start_time) / 60)
         logging.info("END\n\n")
 
