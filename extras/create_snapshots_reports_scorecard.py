@@ -260,8 +260,7 @@ def create_list_of_snapshots_to_generate(db, reports_to_generate):
     report_org_descendants = set()
     for i in db.RequestDoc.collection.find(
         {
-            "report_period": REPORT_PERIOD.WEEKLY,
-            "report_types": REPORT_TYPE.CYHY,
+            "_id": {"$in": reports_to_generate},
             "children": {"$exists": True, "$ne": []},
         },
         {"_id": 1},
