@@ -1131,40 +1131,27 @@ def main():
             cyhy_db_section, scan_db_section, use_docker, nolog, third_party=False
         )
 
-        # Fetch list of third-party report IDs with children; if a third-party
-        # report has no children, there is no point in generating a report
-        # for it
-        third_party_report_ids = [
-            i["_id"]
-            for i in db.RequestDoc.collection.find(
-                {
-                    "report_types": REPORT_TYPE.CYHY_THIRD_PARTY,
-                    "children": {"$exists": True, "$ne": []},
-                },
-                {"_id": 1},
-            )
-        ]
+        # We reuse reports_to_generate here as we prepare to generate the
+        # third-party reports.  Again, no thread locking is needed here for
+        # because we are still single-threaded at this point.
+        logging.info("Building list of third-party reports to generate...")
+        reports_to_generate = create_list_of_reports_to_generate(db, third_party=True)
 
-        if third_party_report_ids:
-            if args["--no-snapshots"]:
-                # Skip creation of third-party snapshots
-                logging.info(
-                    "Skipping third-party snapshot creation "
-                    "due to --no-snapshots parameter"
-                )
-                successful_tp_snaps = third_party_report_ids
-            else:
-                # Create snapshots needed for third-party reports
-                successful_tp_snaps, failed_tp_snaps, time_to_generate_tp_snaps = create_third_party_snapshots(
-                    db, cyhy_db_section, third_party_report_ids
-                )
-
-            # Generate third-party reports
-            successful_tp_reports, failed_tp_reports, time_to_generate_tp_reports = generate_third_party_reports(
-                db, cyhy_db_section, scan_db_section, nolog, successful_tp_snaps
-            )
+        if args["--no-snapshots"]:
+            # Skip creation of third-party snapshots
+            logging.info("Skipping third-party snapshot creation due to --no-snapshots parameter")
         else:
-            logging.info("No third-party reports to generate; skipping this step")
+            # Generate all third-party snapshots and return the updated list of
+            # third-party reports to be generated
+            reports_to_generate, time_to_generate_tp_snapshots, \
+            time_to_generate_grouping_node_snapshots = manage_snapshot_threads(
+                db, cyhy_db_section, third_party=True
+            )
+
+        # Generate all necessary third-party reports
+        time_to_generate_tp_reports = manage_report_threads(
+            cyhy_db_section, scan_db_section, use_docker, nolog, third_party=True
+        )
 
         pull_cybex_ticket_csvs(db)
     finally:
