@@ -411,6 +411,84 @@ def generate_snapshots_from_list(db, cyhy_db_section, third_party):
         generate_snapshot(db, cyhy_db_section, org_id, third_party)
 
 
+def prepare_for_third_party_snapshots(db, cyhy_db_section, tp_reports_to_generate):
+    """Create grouping node snapshots needed for third-party reports
+    
+    Also, return the list of third-party snapshots and reports to create.
+    """
+    start_time = time.time()
+
+    # Build set of all third-party descendants and a map of each descendant to
+    # the third-parties that require them.
+    all_tp_descendants = set()
+    tp_dependence_map = defaultdict(list)
+    logging.info("Building third-party descendant dependence map...")
+    for tp_org_id in tp_reports_to_generate:
+        descendants = db.RequestDoc.get_all_descendants(tp_org_id)
+        all_tp_descendants.update(descendants)
+        for d in descendants:
+            tp_dependence_map[d].append(tp_org_id)
+    logging.info("Done")
+
+    # Check descendants of all third-party orgs for "grouping nodes",
+    # then create snapshots, since they otherwise wouldn't have them.
+    logging.info("Checking for grouping nodes in descendants of third-party orgs...")
+    grouping_node_ids = [
+        org["_id"]
+        for org in db.RequestDoc.collection.find(
+            # Grouping nodes are not stakeholders and have no report_types or scan_types
+            {
+                "_id": {"$in": list(all_tp_descendants)},
+                "stakeholder": False,
+                "report_types": [],
+                "scan_types": [],
+            },
+            {"_id": 1},
+        )
+    ]
+    logging.info("Done")
+
+    if grouping_node_ids:
+        # Create required grouping node snapshots
+        logging.info(
+            "Creating grouping node snapshots needed for third-party reports..."
+        )
+        for grouping_node_id in grouping_node_ids:
+            # Grouping nodes are treated as third-party orgs when creating
+            # snapshots since both require the "--use-only-existing-snapshots"
+            # flag to be set.
+            snapshot_rc = generate_snapshot(
+                db, cyhy_db_section, grouping_node_id, third_party=True
+            )
+
+            if snapshot_rc != 0:
+                logging.error(
+                    "Grouping node %s snapshot creation failed!", grouping_node_id
+                )
+                logging.error(
+                    "Third-party snapshots (dependent on %s) cannot be created for: %s",
+                    grouping_node_id,
+                    tp_dependence_map[grouping_node_id],
+                )
+                # Add dependent third-party snapshot org IDs to failed list and
+                # remove them from list of tp_reports_to_generate so that we
+                # don't attempt to create reports for them later.
+                global failed_tp_snapshots
+                for tp_org_id in tp_dependence_map[grouping_node_id]:
+                    if tp_org_id not in failed_tp_snapshots:
+                        failed_tp_snapshots.append(tp_org_id)
+                    if tp_org_id in tp_reports_to_generate:
+                        tp_reports_to_generate.remove(tp_org_id)
+    else:
+        logging.info("No grouping node snapshots needed for third-party reports")
+    
+    time_to_generate_grouping_node_snapshots = time.time() - start_time
+    logging.info(
+        "Time to complete grouping node snapshots: %.2f minutes",
+        time_to_generate_grouping_node_snapshots / 60,
+    )
+    return sorted(list(tp_reports_to_generate)), time_to_generate_grouping_node_snapshots
+
 
 def manage_snapshot_threads(db, cyhy_db_section, third_party):
     """Spawn threads to generate snapshots
