@@ -685,7 +685,7 @@ def generate_reports_from_list(cyhy_db_section, scan_db_section, use_docker, nol
         )
 
 
-def manage_report_threads(cyhy_db_section, scan_db_section, use_docker, nolog):
+def manage_report_threads(cyhy_db_section, scan_db_section, use_docker, nolog, third_party):
     """Spawn the threads that generate the reports."""
     os.chdir(os.path.join(WEEKLY_REPORT_BASE_DIR, CYHY_REPORT_DIR))
     start_time = time.time()
@@ -694,8 +694,9 @@ def manage_report_threads(cyhy_db_section, scan_db_section, use_docker, nolog):
     # No thread locking is needed here for reports_to_generate because we are
     # still single-threaded at this point
     logging.debug(
-        "%d reports to generate: %s",
+        "%d %sreports to generate: %s",
         len(reports_to_generate),
+        "third-party " if third_party else "",
         reports_to_generate,
     )
 
@@ -707,7 +708,7 @@ def manage_report_threads(cyhy_db_section, scan_db_section, use_docker, nolog):
         try:
             report_thread = threading.Thread(
                 target=generate_reports_from_list,
-                args=(cyhy_db_section, scan_db_section, use_docker, nolog),
+                args=(cyhy_db_section, scan_db_section, use_docker, nolog, third_party),
             )
             report_threads.append(report_thread)
             report_thread.start()
@@ -723,7 +724,9 @@ def manage_report_threads(cyhy_db_section, scan_db_section, use_docker, nolog):
     
     time_to_generate_reports = time.time() - start_time
     logging.info(
-        "Time to complete reports: %.2f minutes", time_to_generate_reports / 60
+        "Time to complete %sreports: %.2f minutes",
+        "third-party " if third_party else "",
+        time_to_generate_reports / 60,
     )
 
     # Create a symlink to the latest reports.  This is for the
