@@ -245,8 +245,8 @@ def create_list_of_reports_to_generate(db, third_party):
         # children.  If a third-party org has no children, there is no point in
         # generating a report since it would be empty.
         query = {
-            "report_types": REPORT_TYPE.CYHY_THIRD_PARTY,
             "children": {"$exists": True, "$ne": []},
+            "report_types": REPORT_TYPE.CYHY_THIRD_PARTY,
         }
     else:
         # Find orgs that receive weekly CyHy reports
@@ -439,9 +439,9 @@ def prepare_for_third_party_snapshots(db, cyhy_db_section, tp_reports_to_generat
             # Grouping nodes are not stakeholders and have no report_types or scan_types
             {
                 "_id": {"$in": list(all_tp_descendants)},
-                "stakeholder": False,
                 "report_types": [],
                 "scan_types": [],
+                "stakeholder": False,
             },
             {"_id": 1},
         )
