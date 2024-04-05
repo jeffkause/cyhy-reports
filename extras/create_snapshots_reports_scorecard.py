@@ -79,27 +79,15 @@ fr_lock = threading.Lock()
 report_durations = list()
 rd_lock = threading.Lock()
 
-# Global variables and thread locks for third-party snapshots and reports
-# Note that snapshots_to_generate and reports_to_generate (and their associated
-# locks) are reused for third-party snapshots and reports, so we don't need
-# variables and locks for them below.
+# Global variables for third-party snapshots and reports. Note that
+# snapshots_to_generate and reports_to_generate are reused for third-party
+# snapshots and reports, so we don't need variables for them below.
 successful_tp_snapshots = list()
-stps_lock = threading.Lock()
-
 failed_tp_snapshots = list()
-ftps_lock = threading.Lock()
-
 tp_snapshot_durations = list()
-tpsd_lock = threading.Lock()
-
 successful_tp_reports = list()
-stpr_lock = threading.Lock()
-
 failed_tp_reports = list()
-ftpr_lock = threading.Lock()
-
 tp_report_durations = list()
-tprd_lock = threading.Lock()
 
 def create_subdirectories():
     # Create all required subdirectories (if they don't already exist)
@@ -306,11 +294,10 @@ def generate_snapshot(db, cyhy_db_section, org_id, third_party):
 
     snapshot_duration = time.time() - snapshot_start_time
 
-    if third_party:
-        with tpsd_lock:
+    with sd_lock:
+        if third_party:
             tp_snapshot_durations.append((org_id, snapshot_duration))
-    else:
-        with sd_lock:
+        else:
             snapshot_durations.append((org_id, snapshot_duration))
 
     # Determine org's descendants for logging below
@@ -336,11 +323,10 @@ def generate_snapshot(db, cyhy_db_section, org_id, third_party):
             org_id,
             snapshot_duration,
         )
-        if third_party:
-            with stps_lock:
+        with ss_lock:
+            if third_party:
                 successful_tp_snapshots.append(org_id)
-        else:
-            with ss_lock:
+            else:
                 successful_snapshots.append(org_id)
                 if org_descendants:
                     logging.info(
@@ -356,11 +342,10 @@ def generate_snapshot(db, cyhy_db_section, org_id, third_party):
             "third-party " if third_party else "",
             org_id,
         )
-        if third_party:
-            with ftps_lock:
+        with fs_lock:
+            if third_party:
                 failed_tp_snapshots.append(org_id)
-        else:
-            with fs_lock:
+            else:
                 failed_snapshots.append(org_id)
                 if org_descendants:
                     logging.error(
@@ -610,11 +595,10 @@ def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog,
     data, err = report_process.communicate()
 
     report_duration = time.time() - report_start_time
-    if third_party:
-        with tprd_lock:
+    with rd_lock:
+        if third_party:
             tp_report_durations.append((org_id, report_duration))
-    else:
-        with rd_lock:
+        else:
             report_durations.append((org_id, report_duration))
 
     if report_process.returncode == 0:
@@ -625,11 +609,10 @@ def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog,
             org_id,
             round(report_duration, 2),
         )
-        if third_party:
-            with stpr_lock:
+        with sr_lock:
+            if third_party:
                 successful_tp_reports.append(org_id)
-        else:
-            with sr_lock:
+            else:
                 successful_reports.append(org_id)
     else:
         logging.info(
@@ -644,11 +627,10 @@ def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog,
             data,
             err,
         )
-        if third_party:
-            with ftpr_lock:
+        with fr_lock:
+            if third_party:
                 failed_tp_reports.append(org_id)
-        else:
-            with fr_lock:
+            else:
                 failed_reports.append(org_id)
 
 
