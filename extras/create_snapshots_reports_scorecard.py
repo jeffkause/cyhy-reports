@@ -972,7 +972,6 @@ def main():
         sample_report(
             cyhy_db_section, scan_db_section, nolog
         )  # Create the sample (anonymized) report
-        
         # Generate all necessary "regular" (non-third-party) reports
         time_to_generate_reports = manage_report_threads(
             cyhy_db_section, scan_db_section, use_docker, nolog, third_party=False
@@ -1071,7 +1070,6 @@ def main():
             logging.info("Longest snapshots:")
             for i in snapshot_durations[:10]:
                 logging.info("  %s: %.1f seconds (%.1f minutes)", i[0], i[1], i[1] / 60)
-            
             if len(tp_snapshot_durations) > 0:
                 logging.info("Third-party and grouping node snapshot performance:")
                 durations = [x[1] for x in tp_snapshot_durations]
