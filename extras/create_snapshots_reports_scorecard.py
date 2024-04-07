@@ -79,6 +79,15 @@ fr_lock = threading.Lock()
 report_durations = list()
 rd_lock = threading.Lock()
 
+# Global variables for third-party snapshots and reports. Note that
+# snapshots_to_generate and reports_to_generate are reused for third-party
+# snapshots and reports, so we don't need variables for them below.
+successful_tp_snapshots = list()
+failed_tp_snapshots = list()
+tp_snapshot_durations = list()
+successful_tp_reports = list()
+failed_tp_reports = list()
+tp_report_durations = list()
 
 def create_subdirectories():
     # Create all required subdirectories (if they don't already exist)
@@ -217,17 +226,26 @@ def sample_report(cyhy_db_section, scan_db_section, nolog):
         logging.info("Stderr report detail: %s%s", data, err)
 
 
-def create_list_of_reports_to_generate(db):
+def create_list_of_reports_to_generate(db, third_party):
     """Create list of organizations that need reports generated."""
+    if third_party:
+        # Find orgs that receive third-party reports and that also have
+        # children.  If a third-party org has no children, there is no point in
+        # generating a report since it would be empty.
+        query = {
+            "children": {"$exists": True, "$ne": []},
+            "report_types": REPORT_TYPE.CYHY_THIRD_PARTY,
+        }
+    else:
+        # Find orgs that receive weekly CyHy reports
+        query = {
+            "report_period": REPORT_PERIOD.WEEKLY,
+            "report_types": REPORT_TYPE.CYHY,
+        }
     return sorted(
         [
-            i["_id"]
-            for i in db.RequestDoc.collection.find(
-                {
-                    "report_period": REPORT_PERIOD.WEEKLY,
-                    "report_types": REPORT_TYPE.CYHY,
-                },
-                {"_id": 1},
+            i["_id"] for i in db.RequestDoc.collection.find(
+                query, {"_id": 1}
             )
         ]
     )
@@ -239,8 +257,7 @@ def create_list_of_snapshots_to_generate(db, reports_to_generate):
     report_org_descendants = set()
     for i in db.RequestDoc.collection.find(
         {
-            "report_period": REPORT_PERIOD.WEEKLY,
-            "report_types": REPORT_TYPE.CYHY,
+            "_id": {"$in": reports_to_generate},
             "children": {"$exists": True, "$ne": []},
         },
         {"_id": 1},
@@ -253,13 +270,14 @@ def create_list_of_snapshots_to_generate(db, reports_to_generate):
     return sorted(list(set(reports_to_generate) - report_org_descendants))
 
 
-def generate_snapshot(db, cyhy_db_section, org_id, use_only_existing_snapshots):
+def generate_snapshot(db, cyhy_db_section, org_id, third_party):
     """Generate a snapshot for a specified organization."""
     snapshot_start_time = time.time()
 
     snapshot_command = ["cyhy-snapshot", "--section", cyhy_db_section, "create"]
 
-    if use_only_existing_snapshots:
+    # Third-party snapshots are based on snapshots that already exist
+    if third_party:
         snapshot_command.append("--use-only-existing-snapshots")
 
     snapshot_command.append(org_id)
@@ -275,12 +293,19 @@ def generate_snapshot(db, cyhy_db_section, org_id, use_only_existing_snapshots):
     data, err = snapshot_process.communicate("yes")
 
     snapshot_duration = time.time() - snapshot_start_time
+
     with sd_lock:
-        snapshot_durations.append((org_id, snapshot_duration))
+        if third_party:
+            tp_snapshot_durations.append((org_id, snapshot_duration))
+        else:
+            snapshot_durations.append((org_id, snapshot_duration))
 
     # Determine org's descendants for logging below
     org_descendants = list()
-    if not use_only_existing_snapshots:
+    # Third-party snapshots are based on descendant snapshots that already
+    # exist, so there is no need to log their descendants here because those
+    # descendant snapshots are not being created by this script.
+    if not third_party:
         if snapshot_process.returncode == 0:
             org_descendants = db.SnapshotDoc.find_one(
                 {"latest": True, "owner": org_id}
@@ -292,33 +317,43 @@ def generate_snapshot(db, cyhy_db_section, org_id, use_only_existing_snapshots):
 
     if snapshot_process.returncode == 0:
         logging.info(
-            "[%s] Successful snapshot: %s (%.2f s)",
+            "[%s] Successful %ssnapshot: %s (%.2f s)",
             threading.current_thread().name,
+            "third-party " if third_party else "",
             org_id,
             snapshot_duration,
         )
         with ss_lock:
-            successful_snapshots.append(org_id)
-            if org_descendants and not use_only_existing_snapshots:
-                logging.info(
-                    "[%s]  - Includes successful descendant snapshot(s): %s",
-                    threading.current_thread().name,
-                    org_descendants,
-                )
-                successful_snapshots.extend(org_descendants)
+            if third_party:
+                successful_tp_snapshots.append(org_id)
+            else:
+                successful_snapshots.append(org_id)
+                if org_descendants:
+                    logging.info(
+                        "[%s]  - Includes successful descendant snapshot(s): %s",
+                        threading.current_thread().name,
+                        org_descendants,
+                    )
+                    successful_snapshots.extend(org_descendants)
     else:
         logging.error(
-            "[%s] Unsuccessful snapshot: %s", threading.current_thread().name, org_id
+            "[%s] Unsuccessful %ssnapshot: %s",
+            threading.current_thread().name,
+            "third-party " if third_party else "",
+            org_id,
         )
         with fs_lock:
-            failed_snapshots.append(org_id)
-            if org_descendants and not use_only_existing_snapshots:
-                logging.error(
-                    "[%s]  - Unsuccessful descendant snapshot(s): %s",
-                    threading.current_thread().name,
-                    org_descendants,
-                )
-                failed_snapshots.extend(org_descendants)
+            if third_party:
+                failed_tp_snapshots.append(org_id)
+            else:
+                failed_snapshots.append(org_id)
+                if org_descendants:
+                    logging.error(
+                        "[%s]  - Unsuccessful descendant snapshot(s): %s",
+                        threading.current_thread().name,
+                        org_descendants,
+                    )
+                    failed_snapshots.extend(org_descendants)
         logging.error(
             "[%s] Stderr failure detail: %s %s",
             threading.current_thread().name,
@@ -328,7 +363,7 @@ def generate_snapshot(db, cyhy_db_section, org_id, use_only_existing_snapshots):
     return snapshot_process.returncode
 
 
-def generate_snapshots_from_list(db, cyhy_db_section):
+def generate_snapshots_from_list(db, cyhy_db_section, third_party):
     """Attempt to generate a snapshot for each organization in a global list.
 
     Each thread pulls an organization ID from the global list
@@ -337,46 +372,138 @@ def generate_snapshots_from_list(db, cyhy_db_section):
     while True:
         with stg_lock:
             logging.debug(
-                "[%s] %d snapshot(s) left to generate",
+                "[%s] %d %ssnapshot(s) left to generate",
                 threading.current_thread().name,
                 len(snapshots_to_generate),
+                "third-party " if third_party else "",
             )
             if snapshots_to_generate:
                 org_id = snapshots_to_generate.pop(0)
             else:
                 logging.info(
-                    "[%s] No snapshots left to generate - thread exiting",
+                    "[%s] No %ssnapshots left to generate - thread exiting",
                     threading.current_thread().name,
+                    "third-party " if third_party else "",
                 )
                 break
 
         logging.info(
-            "[%s] Starting snapshot for: %s", threading.current_thread().name, org_id
+            "[%s] Starting %ssnapshot for: %s",
+            threading.current_thread().name,
+            "third-party " if third_party else "",
+            org_id,
         )
-        generate_snapshot(db, cyhy_db_section, org_id, use_only_existing_snapshots=False)
+        generate_snapshot(db, cyhy_db_section, org_id, third_party)
 
 
-def manage_snapshot_threads(db, cyhy_db_section):
-    """Spawn threads to generate snapshots
+def prepare_for_third_party_snapshots(db, cyhy_db_section, tp_reports_to_generate):
+    """Create grouping node snapshots needed for third-party reports
     
-    Build the lists of reports and snapshots to be generated, then spawn the
-    threads that generate the snapshots."""
+    Also, return the list of third-party snapshots and reports to create.
+    """
     start_time = time.time()
 
-    logging.info("Building list of reports to generate...")
-    reports_to_generate = create_list_of_reports_to_generate(db)
+    # Build set of all third-party descendants and a map of each descendant to
+    # the third-parties that require them.
+    all_tp_descendants = set()
+    tp_dependence_map = defaultdict(list)
+    logging.info("Building third-party descendant dependence map...")
+    for tp_org_id in tp_reports_to_generate:
+        descendants = db.RequestDoc.get_all_descendants(tp_org_id)
+        all_tp_descendants.update(descendants)
+        for d in descendants:
+            tp_dependence_map[d].append(tp_org_id)
+    logging.info("Done")
 
-    logging.info("Building list of snapshots to generate...")
-    global snapshots_to_generate
-    # No thread locking is needed here for snapshots_to_generate because we are
-    # still single-threaded at this point
-    snapshots_to_generate = create_list_of_snapshots_to_generate(
-        db, reports_to_generate
+    # Check descendants of all third-party orgs for "grouping nodes",
+    # then create snapshots, since they otherwise wouldn't have them.
+    logging.info("Checking for grouping nodes in descendants of third-party orgs...")
+    grouping_node_ids = [
+        org["_id"]
+        for org in db.RequestDoc.collection.find(
+            # Grouping nodes are not stakeholders and have no report_types or scan_types
+            {
+                "_id": {"$in": list(all_tp_descendants)},
+                "report_types": [],
+                "scan_types": [],
+                "stakeholder": False,
+            },
+            {"_id": 1},
+        )
+    ]
+    logging.info("Done")
+
+    if grouping_node_ids:
+        # Create required grouping node snapshots
+        logging.info(
+            "Creating grouping node snapshots needed for third-party reports..."
+        )
+        for grouping_node_id in grouping_node_ids:
+            # Grouping nodes are treated as third-party orgs when creating
+            # snapshots since both require the "--use-only-existing-snapshots"
+            # flag to be set.
+            snapshot_rc = generate_snapshot(
+                db, cyhy_db_section, grouping_node_id, third_party=True
+            )
+
+            if snapshot_rc != 0:
+                logging.error(
+                    "Grouping node %s snapshot creation failed!", grouping_node_id
+                )
+                logging.error(
+                    "Third-party snapshots (dependent on %s) cannot be created for: %s",
+                    grouping_node_id,
+                    tp_dependence_map[grouping_node_id],
+                )
+                # Add dependent third-party snapshot org IDs to failed list and
+                # remove them from list of tp_reports_to_generate so that we
+                # don't attempt to create reports for them later.
+                global failed_tp_snapshots
+                for tp_org_id in tp_dependence_map[grouping_node_id]:
+                    if tp_org_id not in failed_tp_snapshots:
+                        failed_tp_snapshots.append(tp_org_id)
+                    if tp_org_id in tp_reports_to_generate:
+                        tp_reports_to_generate.remove(tp_org_id)
+    else:
+        logging.info("No grouping node snapshots needed for third-party reports")
+    
+    time_to_generate_grouping_node_snapshots = time.time() - start_time
+    logging.info(
+        "Time to complete grouping node snapshots: %.2f minutes",
+        time_to_generate_grouping_node_snapshots / 60,
     )
+    return sorted(list(tp_reports_to_generate)), time_to_generate_grouping_node_snapshots
+
+
+def manage_snapshot_threads(db, cyhy_db_section, third_party):
+    """Spawn threads to generate snapshots
+    
+    Build the list of snapshots to be generated, then spawn the threads that
+    generate the snapshots."""
+    start_time = time.time()
+
+    # This variable is only used when generating third-party snapshots
+    time_to_generate_grouping_node_snapshots = 0
+
+    global reports_to_generate
+    global snapshots_to_generate
+    # No thread locking is needed here for reports_to_generate or
+    # snapshots_to_generate because we are still single-threaded at this point
+
+    if third_party:
+        # Some extra preparation must be done before generating third-party snapshots
+        snapshots_to_generate, time_to_generate_grouping_node_snapshots = \
+        prepare_for_third_party_snapshots(db, cyhy_db_section, reports_to_generate)
+    else:
+        logging.info("Building list of snapshots to generate...")
+        snapshots_to_generate = create_list_of_snapshots_to_generate(
+            db, reports_to_generate
+        )
 
     logging.debug(
-        "%d snapshots to generate: %s",
+        "%d %ssnapshots to generate: %s",
         len(snapshots_to_generate),
+        "third-party " if third_party else "",
         snapshots_to_generate,
     )
 
@@ -387,12 +514,17 @@ def manage_snapshot_threads(db, cyhy_db_section):
     for t in range(SNAPSHOT_THREADS):
         try:
             snapshot_thread = threading.Thread(
-                target=generate_snapshots_from_list, args=(db, cyhy_db_section)
+                target=generate_snapshots_from_list,
+                args=(db, cyhy_db_section, third_party)
             )
             snapshot_threads.append(snapshot_thread)
             snapshot_thread.start()
         except Exception:
-            logging.error("Unable to start snapshot thread #%s", t)
+            logging.error(
+                "Unable to start %ssnapshot thread #%s",
+                "third-party " if third_party else "",
+                t,
+            )
 
     # Wait until each thread terminates
     for snapshot_thread in snapshot_threads:
@@ -400,18 +532,28 @@ def manage_snapshot_threads(db, cyhy_db_section):
     
     time_to_generate_snapshots = time.time() - start_time
     logging.info(
-        "Time to complete snapshots: %.2f minutes", time_to_generate_snapshots / 60
+        "Time to complete %ssnapshots: %.2f minutes",
+        "third-party " if third_party else "",
+        time_to_generate_snapshots / 60,
     )
 
-    reports_to_generate = set(reports_to_generate) - set(failed_snapshots)
-    return sorted(list(reports_to_generate)), time_to_generate_snapshots
+    # Remove any failed snapshots from the list of reports to generate
+    if third_party:
+        reports_to_generate = set(reports_to_generate) - set(failed_tp_snapshots)
+    else:
+        reports_to_generate = set(reports_to_generate) - set(failed_snapshots)
+
+    return sorted(list(reports_to_generate)), time_to_generate_snapshots, time_to_generate_grouping_node_snapshots
 
 
-def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog):
+def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog, third_party):
     """Generate a report for a specified organization."""
     report_start_time = time.time()
     logging.info(
-        "[%s] Starting report for: %s", threading.current_thread().name, org_id
+        "[%s] Starting %sreport for: %s",
+        threading.current_thread().name,
+        "third-party " if third_party else "",
+        org_id,
     )
 
     # Base command for generating a report (we will append the org_id below)
@@ -454,21 +596,29 @@ def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog)
 
     report_duration = time.time() - report_start_time
     with rd_lock:
-        report_durations.append((org_id, report_duration))
+        if third_party:
+            tp_report_durations.append((org_id, report_duration))
+        else:
+            report_durations.append((org_id, report_duration))
 
     if report_process.returncode == 0:
         logging.info(
-            "[%s] Successful report generated: %s (%.2f s)",
+            "[%s] Successful %sreport generated: %s (%.2f s)",
             threading.current_thread().name,
+            "third-party " if third_party else "",
             org_id,
             round(report_duration, 2),
         )
         with sr_lock:
-            successful_reports.append(org_id)
+            if third_party:
+                successful_tp_reports.append(org_id)
+            else:
+                successful_reports.append(org_id)
     else:
         logging.info(
-            "[%s] Failure to generate report: %s",
+            "[%s] Failure to generate %sreport: %s",
             threading.current_thread().name,
+            "third-party " if third_party else "",
             org_id,
         )
         logging.info(
@@ -478,10 +628,13 @@ def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog)
             err,
         )
         with fr_lock:
-            failed_reports.append(org_id)
+            if third_party:
+                failed_tp_reports.append(org_id)
+            else:
+                failed_reports.append(org_id)
 
 
-def generate_reports_from_list(cyhy_db_section, scan_db_section, use_docker, nolog):
+def generate_reports_from_list(cyhy_db_section, scan_db_section, use_docker, nolog, third_party):
     """Attempt to generate a report for each organization in a global list.
 
     Each thread pulls an organization ID from the global list
@@ -490,22 +643,31 @@ def generate_reports_from_list(cyhy_db_section, scan_db_section, use_docker, nol
     while True:
         with rtg_lock:
             logging.debug(
-                "[%s] %d reports left to generate",
+                "[%s] %d %sreports left to generate",
                 threading.current_thread().name,
                 len(reports_to_generate),
+                "third-party " if third_party else "",
             )
             if reports_to_generate:
                 org_id = reports_to_generate.pop(0)
             else:
                 logging.info(
-                    "[%s] No reports left to generate - exiting",
+                    "[%s] No %sreports left to generate - exiting",
                     threading.current_thread().name,
+                    "third-party " if third_party else "",
                 )
                 break
-        generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog)
+        generate_report(
+            org_id,
+            cyhy_db_section,
+            scan_db_section,
+            use_docker,
+            nolog,
+            third_party
+        )
 
 
-def manage_report_threads(cyhy_db_section, scan_db_section, use_docker, nolog):
+def manage_report_threads(cyhy_db_section, scan_db_section, use_docker, nolog, third_party):
     """Spawn the threads that generate the reports."""
     os.chdir(os.path.join(WEEKLY_REPORT_BASE_DIR, CYHY_REPORT_DIR))
     start_time = time.time()
@@ -514,8 +676,9 @@ def manage_report_threads(cyhy_db_section, scan_db_section, use_docker, nolog):
     # No thread locking is needed here for reports_to_generate because we are
     # still single-threaded at this point
     logging.debug(
-        "%d reports to generate: %s",
+        "%d %sreports to generate: %s",
         len(reports_to_generate),
+        "third-party " if third_party else "",
         reports_to_generate,
     )
 
@@ -527,7 +690,7 @@ def manage_report_threads(cyhy_db_section, scan_db_section, use_docker, nolog):
         try:
             report_thread = threading.Thread(
                 target=generate_reports_from_list,
-                args=(cyhy_db_section, scan_db_section, use_docker, nolog),
+                args=(cyhy_db_section, scan_db_section, use_docker, nolog, third_party),
             )
             report_threads.append(report_thread)
             report_thread.start()
@@ -543,7 +706,9 @@ def manage_report_threads(cyhy_db_section, scan_db_section, use_docker, nolog):
     
     time_to_generate_reports = time.time() - start_time
     logging.info(
-        "Time to complete reports: %.2f minutes", time_to_generate_reports / 60
+        "Time to complete %sreports: %.2f minutes",
+        "third-party " if third_party else "",
+        time_to_generate_reports / 60,
     )
 
     # Create a symlink to the latest reports.  This is for the
@@ -619,154 +784,6 @@ def resume_commander(db, pause_doc_id):
     return True
 
 
-def create_third_party_snapshots(db, cyhy_db_section, third_party_report_ids):
-    all_tps_start_time = time.time()
-    successful_tp_snaps = list()
-    failed_tp_snaps = list()
-
-    all_tp_descendants = set()
-    tp_dependence_map = defaultdict(list)
-    # Build set of all third-party descendants and a
-    # map of each descendant to the third-parties that require them.
-    for third_party_id in third_party_report_ids:
-        descendants = db.RequestDoc.get_all_descendants(third_party_id)
-        all_tp_descendants.update(descendants)
-        for d in descendants:
-            tp_dependence_map[d].append(third_party_id)
-
-    # Check descendants of all third-party orgs for "grouping nodes",
-    # then create snapshots, since they otherwise wouldn't have them.
-    grouping_node_ids = [
-        org["_id"]
-        for org in db.RequestDoc.collection.find(
-            {
-                "_id": {"$in": list(all_tp_descendants)},
-                "stakeholder": False,
-                "report_types": [],
-                "scan_types": [],
-            },
-            {"_id": 1},
-        )
-    ]
-
-    if grouping_node_ids:
-        # Create required grouping node snapshots
-        logging.info(
-            "Creating grouping node snapshots needed for third-party reports..."
-        )
-        for grouping_node_id in grouping_node_ids:
-            snapshot_rc = generate_snapshot(
-                db, cyhy_db_section, grouping_node_id, use_only_existing_snapshots=True
-            )
-
-            if snapshot_rc != 0:
-                logging.error(
-                    "Grouping node %s snapshot creation failed!", grouping_node_id
-                )
-                logging.error(
-                    "Third-party snapshots (dependent on %s) cannot be created for: %s",
-                    grouping_node_id,
-                    tp_dependence_map[grouping_node_id],
-                )
-                # Add dependent third-party snapshot org IDs to failed list and
-                # remove them from list of third_party_report_ids so that we
-                # don't attempt to create them below.
-                for org_id in tp_dependence_map[grouping_node_id]:
-                    if org_id not in failed_tp_snaps:
-                        failed_tp_snaps.append(org_id)
-                    if org_id in third_party_report_ids:
-                        third_party_report_ids.remove(org_id)
-
-    # TODO Create third-party snapshots in threads
-    # See https://github.com/cisagov/cyhy-reports/issues/60
-    logging.info("Creating third-party snapshots...")
-    for third_party_id in third_party_report_ids:
-        snapshot_rc = generate_snapshot(
-            db, cyhy_db_section, third_party_id, use_only_existing_snapshots=True
-        )
-
-        if snapshot_rc == 0:
-            successful_tp_snaps.append(third_party_id)
-        else:
-            failed_tp_snaps.append(third_party_id)
-
-    time_to_generate_tp_snaps = time.time() - all_tps_start_time
-    logging.info(
-        "Time to create all grouping node and third-party snapshots: %.2f minutes",
-        time_to_generate_tp_snaps / 60
-    )
-    return successful_tp_snaps, failed_tp_snaps, time_to_generate_tp_snaps
-
-
-def generate_third_party_reports(
-    db, cyhy_db_section, scan_db_section, nolog, successful_tp_snaps
-):
-    successful_tp_reports = list()
-    failed_tp_reports = list()
-
-    os.chdir(os.path.join(WEEKLY_REPORT_BASE_DIR, CYHY_REPORT_DIR))
-    all_tpr_start_time = time.time()
-
-    for third_party_id in successful_tp_snaps:
-        logging.info("Starting third-party report for: {}".format(third_party_id))
-        report_start_time = time.time()
-        if nolog:
-            report_process = subprocess.Popen(
-                [
-                    "cyhy-report",
-                    "--encrypt",
-                    "--final",
-                    "--nolog",
-                    "--cyhy-section",
-                    cyhy_db_section,
-                    "--scan-section",
-                    scan_db_section,
-                    third_party_id,
-                ],
-                stdout=subprocess.PIPE,
-                stdin=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-        else:
-            report_process = subprocess.Popen(
-                [
-                    "cyhy-report",
-                    "--encrypt",
-                    "--final",
-                    "--cyhy-section",
-                    cyhy_db_section,
-                    "--scan-section",
-                    scan_db_section,
-                    third_party_id,
-                ],
-                stdout=subprocess.PIPE,
-                stdin=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-
-        data, err = report_process.communicate()
-
-        report_duration = time.time() - report_start_time
-
-        if report_process.returncode == 0:
-            logging.info(
-                "Successful third-party report generated:"
-                " {} ({:.2f} s)".format(third_party_id, round(report_duration, 2))
-            )
-            successful_tp_reports.append(third_party_id)
-        else:
-            logging.error("Third-party report failed: {}".format(third_party_id))
-            logging.error("Stderr failure detail: {} {}".format(data, err))
-            failed_tp_reports.append(third_party_id)
-
-    time_to_generate_tp_reports = time.time() - all_tpr_start_time
-    logging.info(
-        "Time to create all third-party reports: %.2f minutes",
-        time_to_generate_tp_reports / 60
-    )
-    return successful_tp_reports, failed_tp_reports, time_to_generate_tp_reports
-
-
 def pull_cybex_ticket_csvs(db):
     today = current_time.strftime("%Y%m%d")
 
@@ -815,15 +832,11 @@ def main():
     cyhy_db_section = args["CYHY_DB_SECTION"]
     scan_db_section = args["SCAN_DB_SECTION"]
     use_docker = 1
-    # To track third-party snapshot and report status
-    successful_tp_snaps = list()
-    failed_tp_snaps = list()
-    successful_tp_reports = list()
-    failed_tp_reports = list()
 
     time_to_generate_snapshots = 0
     time_to_generate_reports = 0
-    time_to_generate_tp_snaps = 0
+    time_to_generate_grouping_node_snapshots = 0
+    time_to_generate_tp_snapshots = 0
     time_to_generate_tp_reports = 0
 
     create_subdirectories()
@@ -924,60 +937,50 @@ def main():
         global reports_to_generate
         # No thread locking is needed here for reports_to_generate because we
         # are still single-threaded at this point
+        logging.info("Building list of reports to generate...")
+        reports_to_generate = create_list_of_reports_to_generate(db, third_party=False)
+
         if args["--no-snapshots"]:
-            # Skip creation of snapshots
+            # Skip creation of "regular" (non-third-party) snapshots
             logging.info("Skipping snapshot creation due to --no-snapshots parameter")
-            reports_to_generate = create_list_of_reports_to_generate(db)
         else:
-            # Generate all necessary snapshots and return the updated list of
-            # reports to be generated
-            reports_to_generate, time_to_generate_snapshots = manage_snapshot_threads(
-                db, cyhy_db_section
+            # Generate all "regular" (non-third-party) snapshots and return the
+            # updated list of reports to be generated
+            reports_to_generate, time_to_generate_snapshots, \
+            time_to_generate_grouping_node_snapshots = manage_snapshot_threads(
+                db, cyhy_db_section, third_party=False
             )
 
         sample_report(
             cyhy_db_section, scan_db_section, nolog
         )  # Create the sample (anonymized) report
-        
-        # Generate all necessary reports
+
+        # Generate all necessary "regular" (non-third-party) reports
         time_to_generate_reports = manage_report_threads(
-            cyhy_db_section, scan_db_section, use_docker, nolog
+            cyhy_db_section, scan_db_section, use_docker, nolog, third_party=False
         )
 
-        # Fetch list of third-party report IDs with children; if a third-party
-        # report has no children, there is no point in generating a report
-        # for it
-        third_party_report_ids = [
-            i["_id"]
-            for i in db.RequestDoc.collection.find(
-                {
-                    "report_types": REPORT_TYPE.CYHY_THIRD_PARTY,
-                    "children": {"$exists": True, "$ne": []},
-                },
-                {"_id": 1},
-            )
-        ]
+        # We reuse reports_to_generate here as we prepare to generate the
+        # third-party reports.  Again, no thread locking is needed here for
+        # because we are still single-threaded at this point.
+        logging.info("Building list of third-party reports to generate...")
+        reports_to_generate = create_list_of_reports_to_generate(db, third_party=True)
 
-        if third_party_report_ids:
-            if args["--no-snapshots"]:
-                # Skip creation of third-party snapshots
-                logging.info(
-                    "Skipping third-party snapshot creation "
-                    "due to --no-snapshots parameter"
-                )
-                successful_tp_snaps = third_party_report_ids
-            else:
-                # Create snapshots needed for third-party reports
-                successful_tp_snaps, failed_tp_snaps, time_to_generate_tp_snaps = create_third_party_snapshots(
-                    db, cyhy_db_section, third_party_report_ids
-                )
-
-            # Generate third-party reports
-            successful_tp_reports, failed_tp_reports, time_to_generate_tp_reports = generate_third_party_reports(
-                db, cyhy_db_section, scan_db_section, nolog, successful_tp_snaps
-            )
+        if args["--no-snapshots"]:
+            # Skip creation of third-party snapshots
+            logging.info("Skipping third-party snapshot creation due to --no-snapshots parameter")
         else:
-            logging.info("No third-party reports to generate; skipping this step")
+            # Generate all third-party snapshots and return the updated list of
+            # third-party reports to be generated
+            reports_to_generate, time_to_generate_tp_snapshots, \
+            time_to_generate_grouping_node_snapshots = manage_snapshot_threads(
+                db, cyhy_db_section, third_party=True
+            )
+
+        # Generate all necessary third-party reports
+        time_to_generate_tp_reports = manage_report_threads(
+            cyhy_db_section, scan_db_section, use_docker, nolog, third_party=True
+        )
 
         pull_cybex_ticket_csvs(db)
     finally:
@@ -990,21 +993,25 @@ def main():
             logging.info("Number of snapshots failed: 0")
         else:
             logging.info(
-                "Number of snapshots generated: %d", len(successful_snapshots),
+                "Number of snapshots generated: %d",
+                len(successful_snapshots) + len(successful_tp_snapshots),
             )
             logging.info(
-                "  Third-party snapshots generated: %d", len(successful_tp_snaps),
+                "  Number of third-party and grouping node snapshots generated: %d",
+                len(successful_tp_snapshots),
             )
             logging.info(
-                "Number of snapshots failed: %d", len(failed_snapshots),
+                "Number of snapshots failed: %d",
+                len(failed_snapshots) + len(failed_tp_snapshots),
             )
             logging.info(
-                "  Third-party snapshots failed: %d", len(failed_tp_snaps),
+                "  Number of third-party and grouping node snapshots failed: %d",
+                len(failed_tp_snapshots),
             )
-            if failed_snapshots:
-                logging.error("Failed snapshots:")
-                for i in failed_snapshots:
-                    if i in failed_tp_snaps:
+            if failed_snapshots or failed_tp_snapshots:
+                logging.error("Failed snapshots (reports not attempted):")
+                for i in failed_snapshots + failed_tp_snapshots:
+                    if i in failed_tp_snapshots:
                         logging.error("%s (third-party)", i)
                     else:
                         logging.error(i)
@@ -1023,14 +1030,14 @@ def main():
             "  Third-party reports failed: %d", len(failed_tp_reports),
         )
         if failed_reports or failed_tp_reports:
-            logging.info("Failed reports:")
+            logging.error("Failed reports:")
             for i in failed_reports + failed_tp_reports:
                 if i in failed_tp_reports:
                     logging.error("%s (third-party)", i)
                 else:
                     logging.error(i)
 
-        if not args["--no-snapshots"]:
+        if not args["--no-snapshots"] and len(snapshot_durations) > 0:
             logging.info("Snapshot performance:")
             durations = [x[1] for x in snapshot_durations]
             max = numpy.max(durations)
@@ -1047,26 +1054,81 @@ def main():
             for i in snapshot_durations[:10]:
                 logging.info("  %s: %.1f seconds (%.1f minutes)", i[0], i[1], i[1] / 60)
 
-        logging.info("Report performance:")
-        durations = [x[1] for x in report_durations]
-        max = numpy.max(durations)
-        logging.info("  Longest report: %.1f seconds (%.1f minutes)", max, max / 60)
-        median = numpy.median(durations)
-        logging.info("  Median report: %.1f seconds (%.1f minutes)", median, median / 60)
-        mean = numpy.mean(durations)
-        logging.info("  Mean report: %.1f seconds (%.1f minutes)", mean, mean / 60)
-        min = numpy.min(durations)
-        logging.info("  Shortest report: %.1f seconds (%.1f minutes)", min, min / 60)
+            if len(tp_snapshot_durations) > 0:
+                logging.info("Third-party and grouping node snapshot performance:")
+                durations = [x[1] for x in tp_snapshot_durations]
+                max = numpy.max(durations)
+                logging.info("  Longest third-party/grouping node snapshot: %.1f seconds (%.1f minutes)",
+                             max, max / 60)
+                median = numpy.median(durations)
+                logging.info("  Median third-party/grouping node snapshot: %.1f seconds (%.1f minutes)",
+                             median, median / 60)
+                mean = numpy.mean(durations)
+                logging.info("  Mean third-party/grouping node snapshot: %.1f seconds (%.1f minutes)",
+                             mean, mean / 60)
+                min = numpy.min(durations)
+                logging.info("  Shortest third-party/grouping node snapshot: %.1f seconds (%.1f minutes)",
+                             min, min / 60)
 
-        report_durations.sort(key=lambda tup: tup[1], reverse=True)
-        logging.info("Longest reports:")
-        for i in report_durations[:10]:
-            logging.info("  %s: %.1f seconds (%.1f minutes)", i[0], i[1], i[1] / 60)
+                tp_snapshot_durations.sort(key=lambda tup: tup[1], reverse=True)
+                logging.info("Longest third-party/grouping node snapshots:")
+                for i in tp_snapshot_durations[:10]:
+                    logging.info("  %s: %.1f seconds (%.1f minutes)",
+                                 i[0], i[1], i[1] / 60)
 
-        logging.info("Time to generate snapshots: %.2f minutes", time_to_generate_snapshots / 60)
-        logging.info("Time to generate reports: %.2f minutes", time_to_generate_reports / 60)
-        logging.info("Time to generate third-party snapshots: %.2f minutes", time_to_generate_tp_snaps / 60)
-        logging.info("Time to generate third-party reports: %.2f minutes", time_to_generate_tp_reports / 60)
+        if len(report_durations) > 0:
+            logging.info("Report performance:")
+            durations = [x[1] for x in report_durations]
+            max = numpy.max(durations)
+            logging.info("  Longest report: %.1f seconds (%.1f minutes)",
+                         max, max / 60)
+            median = numpy.median(durations)
+            logging.info("  Median report: %.1f seconds (%.1f minutes)",
+                         median, median / 60)
+            mean = numpy.mean(durations)
+            logging.info("  Mean report: %.1f seconds (%.1f minutes)",
+                         mean, mean / 60)
+            min = numpy.min(durations)
+            logging.info("  Shortest report: %.1f seconds (%.1f minutes)",
+                         min, min / 60)
+
+            report_durations.sort(key=lambda tup: tup[1], reverse=True)
+            logging.info("Longest reports:")
+            for i in report_durations[:10]:
+                logging.info("  %s: %.1f seconds (%.1f minutes)", i[0], i[1], i[1] / 60)
+
+        if len(tp_report_durations) > 0:
+            logging.info("Third-party report performance:")
+            durations = [x[1] for x in tp_report_durations]
+            max = numpy.max(durations)
+            logging.info("  Longest third-party report: %.1f seconds (%.1f minutes)",
+                         max, max / 60)
+            median = numpy.median(durations)
+            logging.info("  Median third-party report: %.1f seconds (%.1f minutes)",
+                         median, median / 60)
+            mean = numpy.mean(durations)
+            logging.info("  Mean third-party report: %.1f seconds (%.1f minutes)",
+                         mean, mean / 60)
+            min = numpy.min(durations)
+            logging.info("  Shortest third-party report: %.1f seconds (%.1f minutes)",
+                         min, min / 60)
+
+            tp_report_durations.sort(key=lambda tup: tup[1], reverse=True)
+            logging.info("Longest third-party reports:")
+            for i in tp_report_durations[:10]:
+                logging.info("  %s: %.1f seconds (%.1f minutes)",
+                             i[0], i[1], i[1] / 60)
+
+        logging.info("Time to generate snapshots: %.2f minutes",
+                     time_to_generate_snapshots / 60)
+        logging.info("Time to generate reports: %.2f minutes",
+                     time_to_generate_reports / 60)
+        logging.info("Time to generate grouping node snapshots: %.2f minutes",
+                     time_to_generate_grouping_node_snapshots / 60)
+        logging.info("Time to generate third-party snapshots: %.2f minutes",
+                     time_to_generate_tp_snapshots / 60)
+        logging.info("Time to generate third-party reports: %.2f minutes",
+                     time_to_generate_tp_reports / 60)
         logging.info("Total time: %.2f minutes", (time.time() - start_time) / 60)
         logging.info("END\n\n")
 
