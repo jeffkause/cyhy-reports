@@ -530,6 +530,35 @@ def manage_snapshot_threads(db, cyhy_db_section, third_party):
     for snapshot_thread in snapshot_threads:
         snapshot_thread.join()
     
+    # If there are any failed snapshots, attempt to regenerate them in a
+    # single-threaded manner, which may be less likely to fail than the
+    # multi-threaded approach.
+    #
+    # Make a copy of the list of failed snapshots to iterate over, then clear
+    # the global list of failed snapshots.  Any failures will be re-added during
+    # this regeneration attempt.
+    if third_party:
+        global failed_tp_snapshots
+        snapshots_to_reattempt = list(failed_tp_snapshots)
+        failed_tp_snapshots = list()
+    else:
+        global failed_snapshots
+        snapshots_to_reattempt = list(failed_snapshots)
+        failed_snapshots = list()
+    
+    if snapshots_to_reattempt:
+        reattempt_start_time = time.time()
+        logging.info("Attempting to regenerate failed %ssnapshots: %s",
+                     "third-party " if third_party else "",
+                     snapshots_to_reattempt)
+        for org_id in snapshots_to_reattempt:
+            generate_snapshot(db, cyhy_db_section, org_id, third_party)
+        logging.info(
+            "Time to complete re-attempting failed %ssnapshots: %.2f minutes",
+            "third-party " if third_party else "",
+            (time.time() - reattempt_start_time) / 60,
+        )
+  
     time_to_generate_snapshots = time.time() - start_time
     logging.info(
         "Time to complete %ssnapshots: %.2f minutes",
@@ -703,7 +732,43 @@ def manage_report_threads(cyhy_db_section, scan_db_section, use_docker, nolog, t
     # Wait until each thread terminates
     for report_thread in report_threads:
         report_thread.join()
+
+    # If there are any failed reports, attempt to regenerate them in a
+    # single-threaded manner, which may be less likely to fail than the
+    # multi-threaded approach.
+    #
+    # Make a copy of the list of failed reports to iterate over, then clear the
+    # global list of failed reports.  Any failures will be re-added during this
+    # regeneration attempt.
+    if third_party:
+        global failed_tp_reports
+        reports_to_reattempt = list(failed_tp_reports)
+        failed_tp_reports = list()
+    else:
+        global failed_reports
+        reports_to_reattempt = list(failed_reports)
+        failed_reports = list()
     
+    if reports_to_reattempt:
+        reattempt_start_time = time.time()
+        logging.info("Attempting to regenerate failed %sreports: %s",
+                     "third-party " if third_party else "",
+                     reports_to_reattempt)
+        for org_id in reports_to_reattempt:
+            generate_report(
+                org_id,
+                cyhy_db_section,
+                scan_db_section,
+                use_docker,
+                nolog,
+                third_party
+            )
+        logging.info(
+            "Time to complete re-attempting failed %sreports: %.2f minutes",
+            "third-party " if third_party else "",
+            (time.time() - reattempt_start_time) / 60,
+        )
+
     time_to_generate_reports = time.time() - start_time
     logging.info(
         "Time to complete %sreports: %.2f minutes",
