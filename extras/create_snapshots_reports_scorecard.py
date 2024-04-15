@@ -627,11 +627,11 @@ def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog,
 
     if report_process.returncode == 0:
         logging.info(
-            "[%s] Successful %sreport generated: %s (%.2f s)",
+            "[%s] Successful %sreport: %s (%.2f s)",
             threading.current_thread().name,
             "third-party " if third_party else "",
             org_id,
-            round(report_duration, 2),
+            report_duration,
         )
         with rd_lock:
             if third_party:
@@ -645,7 +645,7 @@ def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog,
                 successful_reports.append(org_id)
     else:
         logging.info(
-            "[%s] Failure to generate %sreport: %s (%.2f s)",
+            "[%s] Unsuccessful %sreport: %s (%.2f s)",
             threading.current_thread().name,
             "third-party " if third_party else "",
             org_id,
