@@ -336,10 +336,11 @@ def generate_snapshot(db, cyhy_db_section, org_id, third_party):
                     successful_snapshots.extend(org_descendants)
     else:
         logging.error(
-            "[%s] Unsuccessful %ssnapshot: %s",
+            "[%s] Unsuccessful %ssnapshot: %s (%.2f s)",
             threading.current_thread().name,
             "third-party " if third_party else "",
             org_id,
+            snapshot_duration,
         )
         with fs_lock:
             if third_party:
@@ -644,10 +645,11 @@ def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog,
                 successful_reports.append(org_id)
     else:
         logging.info(
-            "[%s] Failure to generate %sreport: %s",
+            "[%s] Failure to generate %sreport: %s (%.2f s)",
             threading.current_thread().name,
             "third-party " if third_party else "",
             org_id,
+            report_duration,
         )
         logging.info(
             "[%s] Stderr report detail: %s%s",
