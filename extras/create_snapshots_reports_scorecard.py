@@ -294,12 +294,6 @@ def generate_snapshot(db, cyhy_db_section, org_id, third_party):
 
     snapshot_duration = time.time() - snapshot_start_time
 
-    with sd_lock:
-        if third_party:
-            tp_snapshot_durations.append((org_id, snapshot_duration))
-        else:
-            snapshot_durations.append((org_id, snapshot_duration))
-
     # Determine org's descendants for logging below
     org_descendants = list()
     # Third-party snapshots are based on descendant snapshots that already
@@ -323,6 +317,11 @@ def generate_snapshot(db, cyhy_db_section, org_id, third_party):
             org_id,
             snapshot_duration,
         )
+        with sd_lock:
+            if third_party:
+                tp_snapshot_durations.append((org_id, snapshot_duration))
+            else:
+                snapshot_durations.append((org_id, snapshot_duration))
         with ss_lock:
             if third_party:
                 successful_tp_snapshots.append(org_id)
@@ -624,11 +623,6 @@ def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog,
     data, err = report_process.communicate()
 
     report_duration = time.time() - report_start_time
-    with rd_lock:
-        if third_party:
-            tp_report_durations.append((org_id, report_duration))
-        else:
-            report_durations.append((org_id, report_duration))
 
     if report_process.returncode == 0:
         logging.info(
@@ -638,6 +632,11 @@ def generate_report(org_id, cyhy_db_section, scan_db_section, use_docker, nolog,
             org_id,
             round(report_duration, 2),
         )
+        with rd_lock:
+            if third_party:
+                tp_report_durations.append((org_id, report_duration))
+            else:
+                report_durations.append((org_id, report_duration))
         with sr_lock:
             if third_party:
                 successful_tp_reports.append(org_id)
