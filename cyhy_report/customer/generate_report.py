@@ -190,6 +190,11 @@ POTENTIAL_NMI_SERVICES = [
     "telnet",         # Telnet
 ]
 
+# I wanted to make the cutoff 4096 characters, but that barely fit on a single
+# page when there was a single affected host.  I went with 3072 instead to save
+# space on the page for when there are many affected hosts listed.
+FINDING_DESCRIPTION_MAX_DISPLAY_LENGTH = 3072
+
 def SafeDataFrame(data=None, *args, **kwargs):
     """A wrapper around pandas DataFrame so that empty lists still
     return a DataFrame with columns if requested."""
@@ -3437,12 +3442,9 @@ class ReportGenerator(object):
             # other issues. For more information, see:
             # - https://github.com/cisagov/cyhy-reports/issues/124
             # - https://github.com/cisagov/cyhy-reports/issues/123
-            # NOTE: I wanted to make the cutoff 4096 characters, but that barely
-            # fit on a single page when there was a single affected host.  I
-            # went with 3072 instead to save space on the page for when there
-            # are many affected hosts listed.
-            if len(t["description"]) > 3072:
-                t["description"] = t["description"][:3072] + \
+            if len(t["description"]) > FINDING_DESCRIPTION_MAX_DISPLAY_LENGTH:
+                t["description"] = t["description"][
+                    :FINDING_DESCRIPTION_MAX_DISPLAY_LENGTH] + \
                     "... (Truncated; the full description is available in the findings attachment.)"
 
         result["mitigations"] = self.__results["mitigations"]
