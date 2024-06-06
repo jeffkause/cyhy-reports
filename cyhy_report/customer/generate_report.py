@@ -3440,8 +3440,8 @@ class ReportGenerator(object):
             # Trim long descriptions so that they don't overflow the page
             # (LaTeX table cells cannot span pages, as far as I know) or cause
             # other issues. For more information, see:
-            # - https://github.com/cisagov/cyhy-reports/issues/124
             # - https://github.com/cisagov/cyhy-reports/issues/123
+            # - https://github.com/cisagov/cyhy-reports/issues/124
             if len(t["description"]) > FINDING_DESCRIPTION_MAX_DISPLAY_LENGTH:
                 t["description"] = t["description"][
                     :FINDING_DESCRIPTION_MAX_DISPLAY_LENGTH] + \
