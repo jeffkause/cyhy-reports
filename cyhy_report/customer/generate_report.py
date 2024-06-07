@@ -3442,7 +3442,7 @@ class ReportGenerator(object):
             # other issues. For more information, see:
             # - https://github.com/cisagov/cyhy-reports/issues/123
             # - https://github.com/cisagov/cyhy-reports/issues/124
-            if len(t["description"]) > FINDING_DESCRIPTION_MAX_DISPLAY_LENGTH:
+            if len(t.get("description", "")) > FINDING_DESCRIPTION_MAX_DISPLAY_LENGTH:
                 t["description"] = t["description"][
                     :FINDING_DESCRIPTION_MAX_DISPLAY_LENGTH] + \
                     "... (Truncated; the full description is available in the findings attachment.)"
